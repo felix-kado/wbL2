@@ -1,17 +1,21 @@
 package main
 
 /*
-=== Взаимодействие с ОС ===
+Необходимо реализовать свой собственный UNIX-шелл-утилиту с поддержкой ряда простейших команд:
 
-Необходимо реализовать собственный шелл
+- cd <args> - смена директории (в качестве аргумента могут быть то-то и то)
+- pwd - показать путь до текущего каталога
+- echo <args> - вывод аргумента в STDOUT
+- kill <args> - "убить" процесс, переданный в качесте аргумента (пример: такой-то пример)
+- ps - выводит общую информацию по запущенным процессам в формате *такой-то формат*
 
-встроенные команды: cd/pwd/echo/kill/ps
-поддержать fork/exec команды
-конвеер на пайпах
+Так же требуется поддерживать функционал fork/exec-команд
 
-Реализовать утилиту netcat (nc) клиент
-принимать данные из stdin и отправлять в соединение (tcp/udp)
-Программа должна проходить все тесты. Код должен проходить проверки go vet и golint.
+Дополнительно необходимо поддерживать конвейер на пайпах (linux pipes, пример cmd1 | cmd2 | .... | cmdN).
+
+*Шелл — это обычная консольная программа, которая будучи запущенной, в интерактивном сеансе выводит некое приглашение
+в STDOUT и ожидает ввода пользователя через STDIN. Дождавшись ввода, обрабатывает команду согласно своей логике
+и при необходимости выводит результат на экран. Интерактивный сеанс поддерживается до тех пор, пока не будет введена команда выхода (например \quit).
 */
 
 import (
@@ -19,91 +23,119 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 )
 
-func main() {
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Print("shell> ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Println("Error reading input:", err)
-			continue
-		}
-		input = strings.TrimSpace(input)
-		args := strings.Split(input, " ")
-		if len(args) == 0 {
-			continue
-		}
-		switch args[0] {
-		case "cd":
-			if len(args) < 2 {
-				fmt.Println("cd: missing argument")
-			} else {
-				err := os.Chdir(args[1])
-				if err != nil {
-					fmt.Println("cd:", err)
-				}
-			}
-		case "pwd":
-			dir, err := os.Getwd()
-			if err != nil {
-				fmt.Println("pwd:", err)
-			} else {
-				fmt.Println(dir)
-			}
-		case "echo":
-			fmt.Println(strings.Join(args[1:], " "))
-		case "kill":
-			if len(args) < 2 {
-				fmt.Println("kill: missing argument")
-			} else {
-				pid := args[1]
-				killProcess(pid)
-			}
-		case "ps":
-			psCommand()
-		case "exit":
-			os.Exit(0)
-		default:
-			runExternalCommand(args)
-		}
-	}
+// Интерфейс Command для всех команд шелла для реализации паттерна
+type Command interface {
+	Execute(args []string) error
 }
 
-func killProcess(pid string) {
-	cmd := exec.Command("kill", pid)
-	err := cmd.Run()
+type CDCommand struct{}
+
+func (c *CDCommand) Execute(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("cd: отсутствует аргумент")
+	}
+	return os.Chdir(args[0])
+}
+
+type PWDCommand struct{}
+
+func (p *PWDCommand) Execute(args []string) error {
+	dir, err := os.Getwd()
 	if err != nil {
-		fmt.Println("kill:", err)
+		return err
 	}
+	fmt.Println(dir)
+	return nil
 }
 
-func psCommand() {
+type EchoCommand struct{}
+
+func (e *EchoCommand) Execute(args []string) error {
+	fmt.Println(strings.Join(args, " "))
+	return nil
+}
+
+type KillCommand struct{}
+
+func (k *KillCommand) Execute(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("kill: отсутствует аргумент")
+	}
+	pid, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("kill: неверный PID")
+	}
+	return syscall.Kill(pid, syscall.SIGKILL)
+}
+
+type PSCommand struct{}
+
+func (p *PSCommand) Execute(args []string) error {
 	cmd := exec.Command("ps")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		fmt.Println("ps:", err)
+	return cmd.Run()
+}
+
+type Shell struct {
+	commands map[string]Command
+}
+
+func NewShell() *Shell {
+	return &Shell{
+		commands: map[string]Command{
+			"cd":   &CDCommand{},
+			"pwd":  &PWDCommand{},
+			"echo": &EchoCommand{},
+			"kill": &KillCommand{},
+			"ps":   &PSCommand{},
+		},
 	}
 }
 
-func runExternalCommand(args []string) {
-	cmd := exec.Command(args[0], args[1:]...)
+func (s *Shell) ExecuteCommand(input string) error {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return nil
+	}
+	cmdName := parts[0]
+	args := parts[1:]
+
+	cmd, found := s.commands[cmdName]
+	if found {
+		return cmd.Execute(args)
+	}
+
+	// Попытка выполнить как системную команду
+	return s.forkExecCommand(cmdName, args)
+}
+
+func (s *Shell) forkExecCommand(name string, args []string) error {
+	cmd := exec.Command(name, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	err := cmd.Run()
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			if status, ok := exitError.Sys().(syscall.WaitStatus); ok {
-				fmt.Printf("Command exited with status %d\n", status.ExitStatus())
-			}
-		} else {
-			fmt.Println("Error running command:", err)
+	return cmd.Run()
+}
+
+func main() {
+	shell := NewShell()
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Print("> ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input == "exit" {
+			break
+		}
+		err := shell.ExecuteCommand(input)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Ошибка:", err)
 		}
 	}
 }

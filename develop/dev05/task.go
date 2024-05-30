@@ -1,5 +1,21 @@
 package main
 
+/*
+Утилита grep
+
+Реализовать утилиту фильтрации по аналогии с консольной утилитой (man grep — смотрим описание и основные параметры).
+
+Реализовать поддержку утилитой следующих ключей:
+-A - "after" печатать +N строк после совпадения
+-B - "before" печатать +N строк до совпадения
+-C - "context" (A+B) печатать ±N строк вокруг совпадения
+-c - "count" (количество строк)
+-i - "ignore-case" (игнорировать регистр)
+-v - "invert" (вместо совпадения, исключать)
+-F - "fixed", точное совпадение со строкой, не паттерн
+-n - "line num", напечатать номер строки
+*/
+
 import (
 	"bufio"
 	"flag"
@@ -62,7 +78,7 @@ func main() {
 
 	// Копия строк в нижнем регистре для поиска
 	searchLines := make([]string, len(lines))
-	searchLines = copy(searchLines, lines)
+	copy(searchLines, lines)
 
 	if config.ignoreCase {
 		pattern = strings.ToLower(pattern)

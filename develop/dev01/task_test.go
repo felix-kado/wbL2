@@ -1,38 +1,36 @@
 package main
 
 import (
-	"fmt"
+	"os/exec"
+	"strings"
 	"testing"
-	"time"
-
-	"github.com/golang/mock/gomock"
-	"github.com/stretchr/testify/assert"
 )
 
-type NTPClient interface {
-	Time(server string) (time.Time, error)
+func TestMain(t *testing.T) {
+	cmd := exec.Command("go", "run", "task.go", "--server", "pool.ntp.org")
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		t.Fatalf("Program failed with error: %v", err)
+	}
+
+	expected := "Current NTP time from server pool.ntp.org is:"
+	if !strings.Contains(string(output), expected) {
+		t.Fatalf("Unexpected output: %s\nExpected to contain: %s", output, expected)
+	}
 }
 
-func TestTimeFetchingSuccess(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
+func TestInvalidServer(t *testing.T) {
+	// Запускаем нашу программу с неправильным адресом сервера NTP.
+	cmd := exec.Command("go", "run", "task.go", "--server", "invalid.server")
+	output, err := cmd.CombinedOutput()
 
-	mockNTPClient := NewMockNTPClient(ctrl)
-	mockNTPClient.EXPECT().Time("pool.ntp.org").Return(time.Now(), nil)
+	if err == nil {
+		t.Fatal("Expected program to fail with an invalid server, but it did not")
+	}
 
-	client = mockNTPClient
-	_, err := client.Time("pool.ntp.org")
-	assert.Nil(t, err, "Expected no error for NTP time fetching")
-}
-
-func TestTimeFetchingFailure(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockNTPClient := NewMockNTPClient(ctrl)
-	mockNTPClient.EXPECT().Time("bad.server.com").Return(time.Time{}, fmt.Errorf("failed to reach server"))
-
-	client = mockNTPClient
-	_, err := client.Time("bad.server.com")
-	assert.NotNil(t, err, "Expected an error for NTP time fetching")
+	expected := "Error fetching NTP time from server"
+	if !strings.Contains(string(output), expected) {
+		t.Fatalf("Unexpected output: %s\nExpected to contain: %s", output, expected)
+	}
 }

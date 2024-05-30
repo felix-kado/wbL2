@@ -44,7 +44,7 @@ func TestMyCut(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command("./mycut", "-f", tt.fields, "-d", tt.delimiter)
+			cmd := exec.Command("go", "run", "task.go", "-f", tt.fields, "-d", tt.delimiter)
 			if tt.separated {
 				cmd.Args = append(cmd.Args, "-s")
 			}
@@ -71,7 +71,7 @@ func TestMyCut(t *testing.T) {
 }
 
 func TestMissingFieldsFlag(t *testing.T) {
-	cmd := exec.Command("./mycut", "-d", "\t")
+	cmd := exec.Command("go", "run", "task.go", "-d", "\t")
 	cmd.Stdin = strings.NewReader("col1\tcol2\tcol3\nval1\tval2\tval3")
 
 	err := cmd.Run()
@@ -81,7 +81,7 @@ func TestMissingFieldsFlag(t *testing.T) {
 }
 
 func TestInvalidFieldIndex(t *testing.T) {
-	cmd := exec.Command("./mycut", "-f", "10", "-d", "\t")
+	cmd := exec.Command("go", "run", "task.go", "-f", "10", "-d", "\t")
 	cmd.Stdin = strings.NewReader("col1\tcol2\tcol3\nval1\tval2\tval3")
 
 	// Захват вывода

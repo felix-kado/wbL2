@@ -2,108 +2,174 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-func TestBuiltinCommands(t *testing.T) {
-	testCd(t)
-	testPwd(t)
-	testEcho(t)
-	testKill(t)
-	testPs(t)
+func captureOutput(f func()) (string, error) {
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+
+	f()
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	_, err := buf.ReadFrom(r)
+	if err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
-func testCd(t *testing.T) {
-	initialDir, err := os.Getwd()
+func TestCDCommand(t *testing.T) {
+	cmd := &CDCommand{}
+	originalDir, _ := os.Getwd()
+	defer func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Fatalf("Failed to return to original directory: %v", err)
+		}
+	}()
+
+	err := cmd.Execute([]string{"/tmp"})
 	if err != nil {
-		t.Fatalf("Failed to get initial directory: %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	newDir := "/tmp"
-	if err := os.Chdir(newDir); err != nil {
-		t.Fatalf("Failed to change directory to %s: %v", newDir, err)
-	}
-
-	currentDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get current directory: %v", err)
-	}
-
-	if currentDir != newDir && currentDir != "/private/tmp" {
-		t.Fatalf("cd failed: expected %v or /private/tmp, got %v", newDir, currentDir)
-	}
-
-	if err := os.Chdir(initialDir); err != nil {
-		t.Fatalf("Failed to restore initial directory: %v", err)
-	}
-}
-
-func testPwd(t *testing.T) {
-	expectedDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get current directory: %v", err)
-	}
-
-	output := runShellCommand(t, "pwd")
-	if strings.TrimSpace(output) != expectedDir {
-		t.Fatalf("pwd failed: expected %v, got %v", expectedDir, output)
+	dir, _ := os.Getwd()
+	if dir != "/private/tmp" {
+		t.Fatalf("Expected /tmp, got %s", dir)
 	}
 }
 
-func testEcho(t *testing.T) {
-	expectedOutput := "Hello, World!"
-	output := runShellCommand(t, fmt.Sprintf("echo %v", expectedOutput))
-	if strings.TrimSpace(output) != expectedOutput {
-		t.Fatalf("echo failed: expected %v, got %v", expectedOutput, output)
+func TestPWDCommand(t *testing.T) {
+	cmd := &PWDCommand{}
+	originalDir, _ := os.Getwd()
+	defer func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Fatalf("Failed to return to original directory: %v", err)
+		}
+	}()
+
+	err := os.Chdir("/tmp")
+	if err != nil {
+		t.Fatalf("Could not change to /tmp: %v", err)
+	}
+
+	output, err := captureOutput(func() {
+		err = cmd.Execute([]string{})
+	})
+
+	if err != nil {
+		t.Fatalf("Error capturing output: %v", err)
+	}
+
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if strings.TrimSpace(output) != "/private/tmp" {
+		t.Fatalf("Expected /tmp, got %s", output)
 	}
 }
 
-func testKill(t *testing.T) {
-	cmd := exec.Command("sleep", "60")
-	err := cmd.Start()
+func TestEchoCommand(t *testing.T) {
+	cmd := &EchoCommand{}
+	output, err := captureOutput(func() {
+		err := cmd.Execute([]string{"Hello", "World"})
+		if err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+	})
+
 	if err != nil {
-		t.Fatalf("Failed to start sleep process: %v", err)
+		t.Fatalf("Error capturing output: %v", err)
 	}
-	defer cmd.Process.Kill()
 
-	pid := cmd.Process.Pid
-	runShellCommand(t, fmt.Sprintf("kill %d", pid))
+	if strings.TrimSpace(output) != "Hello World" {
+		t.Fatalf("Expected 'Hello World', got '%s'", output)
+	}
+}
 
-	err = cmd.Wait()
+func TestKillCommand(t *testing.T) {
+	cmd := &KillCommand{}
+
+	// Start a test process to kill
+	process := exec.Command("sleep", "10")
+	err := process.Start()
+	if err != nil {
+		t.Fatalf("Could not start process: %v", err)
+	}
+
+	err = cmd.Execute([]string{strconv.Itoa(process.Process.Pid)})
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	err = process.Wait()
 	if err == nil || !strings.Contains(err.Error(), "signal: killed") {
-		t.Fatalf("kill failed: expected process to be killed, got %v", err)
+		t.Fatalf("Expected process to be killed, got %v", err)
 	}
 }
 
-func testPs(t *testing.T) {
-	output := runShellCommand(t, "ps")
-	if !strings.Contains(output, "PID") {
-		t.Fatalf("ps failed: expected PID header in output, got %v", output)
-	}
-}
+func TestPSCommand(t *testing.T) {
+	cmd := &PSCommand{}
+	output, err := captureOutput(func() {
+		err := cmd.Execute([]string{})
+		if err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+	})
 
-func runShellCommand(t *testing.T, command string) string {
-	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", command)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
-	err := cmd.Run()
 	if err != nil {
-		t.Fatalf("Failed to run shell command %v: %v", command, err)
+		t.Fatalf("Error capturing output: %v", err)
 	}
-	return out.String()
+
+	if !strings.Contains(output, "PID") {
+		t.Fatalf("Expected output to contain 'PID', got '%s'", output)
+	}
 }
 
-func TestHelperProcess(*testing.T) {
-	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
-		return
+func TestShellExecuteCommand(t *testing.T) {
+	shell := NewShell()
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"echo test", "test\n"},
+		{"pwd", "/private/tmp\n"},
 	}
-	args := os.Args[3:]
-	runExternalCommand(args)
-	os.Exit(0)
+
+	originalDir, _ := os.Getwd()
+	defer func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Fatalf("Failed to return to original directory: %v", err)
+		}
+	}()
+	err := os.Chdir("/tmp")
+	if err != err {
+		t.Fatalf("Failed to change dir to /tmp in test: %v", err)
+	}
+	for _, test := range tests {
+		output, err := captureOutput(func() {
+			err := shell.ExecuteCommand(test.input)
+			if err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+		})
+
+		if err != nil {
+			t.Fatalf("Error capturing output: %v", err)
+		}
+
+		if output != test.expected {
+			t.Fatalf("Expected '%s', got '%s'", test.expected, output)
+		}
+	}
 }
